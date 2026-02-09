@@ -1,0 +1,257 @@
+version: v2beta1
+name: gw-gcp-tools
+
+localRegistry:
+   enabled: false
+
+vars:
+    GCP_PROJECT:
+        source: env
+        name: GCP_PROJECT
+        default: "devopstest-473812"
+    NAMESPACE_NAME: "default"
+    ENV_NAME: "dev"
+    ENV_SUFFIX_NAME: ""
+    ENTITY_NAME: gw-gcp-tools
+    INGRESS_PREFIX: google-cloud-mcp
+    SERVICE_NAME: ${ENTITY_NAME}
+    SUFFIXED_ENTITY_NAME: ${ENTITY_NAME}${ENV_SUFFIX_NAME}
+    DEVSPACE_FLAGS:
+        value: "-n ${NAMESPACE_NAME}"
+
+    REGISTRY: us-central1-docker.pkg.dev
+    REGISTRY_PULL: us-central1-docker.pkg.dev
+    REGISTRY_REPO: ${GCP_PROJECT}/gogatewayai-devtest-container-registry
+    REQUIRE_PULL_SECRET: true
+
+    API_ROUTES_PREFIX: "/api/${INGRESS_PREFIX}/v1"
+    HOME:
+        source: env
+        name: HOME
+
+pullSecrets:
+  gw-gcp-tools-pull-secret:
+    registry: us-central1-docker.pkg.dev
+
+# This is a list of `pipelines` that DevSpace can execute (you can define your own)
+pipelines:
+  # This is the pipeline for the main command: `devspace dev` (or `devspace run-pipeline dev`)
+  dev:
+    run: |-
+      run_dependencies --all       # 1. Deploy any projects this project needs (see "dependencies")
+      ensure_pull_secrets --all    # 2. Ensure pull secrets
+      create_deployments --all     # 3. Deploy Helm charts and manifests specfied as "deployments"
+      start_dev app                # 4. Start dev mode "app" (see "dev" section)
+  # You can run this pipeline via `devspace deploy` (or `devspace run-pipeline deploy`)
+  build: 
+    run: |-
+      run_dependencies --all                            # 1. Deploy any projects this project needs (see "dependencies")
+      ensure_pull_secrets --all                         # 2. Ensure pull secrets
+      build_images app
+  deploy:
+    run: |-
+      run_dependencies --all                            # 1. Deploy any projects this project needs (see "dependencies")
+      ensure_pull_secrets --all                         # 2. Ensure pull secrets
+      build_images app
+      create_deployments --all                          # 4. Deploy Helm charts and manifests specfied as "deployments"
+
+  debug:
+      run: |-
+          run_dependencies --all       # 1. Deploy any projects this project needs (see "dependencies")
+          ensure_pull_secrets --all    # 2. Ensure pull secrets
+          create_deployments --all 
+          start_dev debug
+
+# This is a list of `images` that DevSpace can build for this project
+images:
+    app:
+        image: ${REGISTRY}/${REGISTRY_REPO}/${ENTITY_NAME}
+        tags:
+            - '#####'
+            - latest
+        dockerfile: "./Dockerfile"
+        docker:
+            useBuildKit: true
+            args:
+                - "--secret"
+                - "id=gcp_adc,src=${HOME}/.config/gcloud/application_default_credentials.json"
+        appendDockerfileInstructions:
+            - USER root
+        buildArgs: {}
+        createPullSecret: true
+
+# This is a list of `deployments` that DevSpace can create for this project
+deployments:
+  gw-gcp-tools:
+    helm:
+      values:
+        containers:
+          - image: ${REGISTRY}/${REGISTRY_REPO}/${ENTITY_NAME}
+            command: ["node"]
+            args: ["dist/index.js", "--transport=sse"]
+            env:
+              - name: POD_NAMESPACE
+                valueFrom:
+                  fieldRef:
+                    fieldPath: metadata.namespace
+              - name: POD_NAME
+                valueFrom:
+                  fieldRef:
+                    fieldPath: metadata.name
+              - name: POD_IP
+                valueFrom:
+                  fieldRef:
+                    fieldPath: status.podIP
+              - name: SERVICE_NAME
+                value: ${SERVICE_NAME}
+              - name: SERVER_NAME
+                value: ${SERVICE_NAME}
+              - name: K8S
+                value: "true"
+              - name: DEPLOYMENT_TYPE
+                value: "prod"
+              - name: ENV_NAME
+                value: "${ENV_NAME}"
+              - name: ENV_SUFFIX_NAME
+                value: "${ENV_SUFFIX_NAME}"
+              - name: API_ROUTES_PREFIX
+                value: "${API_ROUTES_PREFIX}"
+              - name: MCP_HTTP_PORT
+                value: "3000"
+              - name: GOOGLE_APPLICATION_CREDENTIALS
+                value: /root/.config/gcloud/application_default_credentials.json
+              - name: GOOGLE_CLOUD_PROJECT
+                value: "${GCP_PROJECT}"
+              - name: MCP_HTTP_HOST
+                value: "0.0.0.0"
+        rollingUpdate:
+          enabled: true
+          maxSurge: "100%"
+          maxUnavailable: "50%"
+        service:
+          ports:
+            - port: 3000
+
+dev:
+  app:
+    imageSelector: ${REGISTRY}/${REGISTRY_REPO}/${ENTITY_NAME}
+    devImage: node:22-alpine
+    sync:
+      - path: ./
+        printLogs: true
+        excludePaths:
+          - node_modules/
+          - dist/
+        onUpload:
+          restartContainer: true
+        disableDownload: true
+    
+    # Use patches to mount the GCP credentials file directly from the host
+    patches:
+      - op: add
+        path: /spec/template/spec/volumes/-
+        value:
+          name: gcp-adc
+          hostPath:
+            path: ${HOME}/.config/gcloud/application_default_credentials.json
+      - op: add
+        path: /spec/template/spec/containers/0/volumeMounts/-
+        value:
+          name: gcp-adc
+          mountPath: /root/.config/gcloud/application_default_credentials.json
+          subPath: application_default_credentials.json
+
+    terminal:
+      command: ./devspace_start.sh
+      disableScreen: true
+    env:
+      - name: GOOGLE_APPLICATION_CREDENTIALS
+        value: /root/.config/gcloud/application_default_credentials.json
+      - name: GOOGLE_CLOUD_PROJECT
+        value: "${GCP_PROJECT}"
+      - name: MCP_HTTP_HOST
+        value: "0.0.0.0"
+      - name: MCP_HTTP_PORT
+        value: "3000"
+    ssh:
+      enabled: true
+    proxyCommands:
+      - command: devspace
+      - command: kubectl
+      - command: helm
+      - gitCredentials: true
+    command: ["sleep"]
+    args: ["infinity"]
+    ports:
+      - port: "3000"
+
+  debug:
+    imageSelector: ${REGISTRY}/${REGISTRY_REPO}/${ENTITY_NAME}
+    devImage: node:22-alpine
+    sync:
+      - path: ./
+        printLogs: true
+        excludePaths:
+          - node_modules/
+          - dist/
+        onUpload:
+          restartContainer: true
+        disableDownload: true
+
+    patches:
+      - op: add
+        path: /spec/template/spec/volumes/-
+        value:
+          name: gcp-adc
+          hostPath:
+            path: ${HOME}/.config/gcloud/application_default_credentials.json
+      - op: add
+        path: /spec/template/spec/containers/0/volumeMounts/-
+        value:
+          name: gcp-adc
+          mountPath: /root/.config/gcloud/application_default_credentials.json
+          subPath: application_default_credentials.json
+
+    terminal:
+      disableScreen: true
+      command: ./devspace_start.sh
+    env:
+      - name: GOOGLE_APPLICATION_CREDENTIALS
+        value: /root/.config/gcloud/application_default_credentials.json
+      - name: GOOGLE_CLOUD_PROJECT
+        value: "${GCP_PROJECT}"
+      - name: MCP_HTTP_HOST
+        value: "0.0.0.0"
+      - name: MCP_HTTP_PORT
+        value: "3000"
+    ssh:
+      enabled: true
+    proxyCommands:
+      - command: devspace
+      - command: kubectl
+      - command: helm
+      - gitCredentials: true
+    command: ["sleep"]
+    args: ["infinity"]
+    ports:
+      - port: "3000"
+      - port: "9229"
+
+
+# Use the `commands` section to define repeatable dev workflows for this project 
+commands:
+  migrate-db:
+    command: |-
+      echo 'This is a cross-platform, shared command that can be used to codify any kind of dev task.'
+      echo 'Anyone using this project can invoke it via "devspace run migrate-db"'
+
+profiles:
+- name: integration
+  merge:
+    vars:
+      GCP_PROJECT:  "integration-gogatewayai"
+
+- name: dev
+  merge:
+    vars:
+       GCP_PROJECT:  "devopstest-473812"

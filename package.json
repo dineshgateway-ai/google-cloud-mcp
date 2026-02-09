@@ -32,7 +32,7 @@
     "spanner",
     "trace"
   ],
-  "author": "Kristof Kowalski <k@ko.wal.ski>",
+  "author": "Dineshkumar K <d.kuppan@gogateway.ai>",
   "license": "Apache",
   "dependencies": {
     "@google-cloud/billing": "^5.1.0",
