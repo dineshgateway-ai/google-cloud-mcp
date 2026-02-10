@@ -29,10 +29,6 @@ vars:
         source: env
         name: HOME
 
-pullSecrets:
-  gw-gcp-tools-pull-secret:
-    registry: us-central1-docker.pkg.dev
-
 # This is a list of `pipelines` that DevSpace can execute (you can define your own)
 pipelines:
   # This is the pipeline for the main command: `devspace dev` (or `devspace run-pipeline dev`)
@@ -72,9 +68,7 @@ images:
         dockerfile: "./Dockerfile"
         docker:
             useBuildKit: true
-            args:
-                - "--secret"
-                - "id=gcp_adc,src=${HOME}/.config/gcloud/application_default_credentials.json"
+            args: []
         appendDockerfileInstructions:
             - USER root
         buildArgs: {}
@@ -87,6 +81,7 @@ deployments:
       values:
         containers:
           - image: ${REGISTRY}/${REGISTRY_REPO}/${ENTITY_NAME}
+            imagePullPolicy: Always
             command: ["node"]
             args: ["dist/index.js", "--transport=sse"]
             env:
@@ -118,12 +113,14 @@ deployments:
                 value: "${API_ROUTES_PREFIX}"
               - name: MCP_HTTP_PORT
                 value: "3000"
-              - name: GOOGLE_APPLICATION_CREDENTIALS
-                value: /root/.config/gcloud/application_default_credentials.json
+
               - name: GOOGLE_CLOUD_PROJECT
                 value: "${GCP_PROJECT}"
               - name: MCP_HTTP_HOST
                 value: "0.0.0.0"
+        serviceAccountName: ksa-gw-ms
+        imagePullSecrets:
+          - name: gw-gcp-tools-pull-secret
         rollingUpdate:
           enabled: true
           maxSurge: "100%"
@@ -144,29 +141,17 @@ dev:
           - dist/
         onUpload:
           restartContainer: true
-        disableDownload: true
-    
-    # Use patches to mount the GCP credentials file directly from the host
+        disableDownload: true    
     patches:
       - op: add
-        path: /spec/template/spec/volumes/-
-        value:
-          name: gcp-adc
-          hostPath:
-            path: ${HOME}/.config/gcloud/application_default_credentials.json
-      - op: add
-        path: /spec/template/spec/containers/0/volumeMounts/-
-        value:
-          name: gcp-adc
-          mountPath: /root/.config/gcloud/application_default_credentials.json
-          subPath: application_default_credentials.json
+        path: /spec/template/spec/serviceAccountName
+        value: ksa-gw-ms
 
     terminal:
       command: ./devspace_start.sh
       disableScreen: true
     env:
-      - name: GOOGLE_APPLICATION_CREDENTIALS
-        value: /root/.config/gcloud/application_default_credentials.json
+
       - name: GOOGLE_CLOUD_PROJECT
         value: "${GCP_PROJECT}"
       - name: MCP_HTTP_HOST
@@ -196,28 +181,17 @@ dev:
           - dist/
         onUpload:
           restartContainer: true
-        disableDownload: true
-
+        disableDownload: true    
     patches:
       - op: add
-        path: /spec/template/spec/volumes/-
-        value:
-          name: gcp-adc
-          hostPath:
-            path: ${HOME}/.config/gcloud/application_default_credentials.json
-      - op: add
-        path: /spec/template/spec/containers/0/volumeMounts/-
-        value:
-          name: gcp-adc
-          mountPath: /root/.config/gcloud/application_default_credentials.json
-          subPath: application_default_credentials.json
+        path: /spec/template/spec/serviceAccountName
+        value: ksa-gw-ms
 
     terminal:
       disableScreen: true
       command: ./devspace_start.sh
     env:
-      - name: GOOGLE_APPLICATION_CREDENTIALS
-        value: /root/.config/gcloud/application_default_credentials.json
+
       - name: GOOGLE_CLOUD_PROJECT
         value: "${GCP_PROJECT}"
       - name: MCP_HTTP_HOST
